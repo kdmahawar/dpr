@@ -6,10 +6,15 @@ from openpyxl import load_workbook
 
 # --- पेज सेटिंग ---
 st.set_page_config(page_title="DPR Auto-Filler", layout="wide")
+
+# --- टाइटल और आपका नाम ---
 st.title("🚀 Quick DPR Generator")
+st.markdown("##### Design & Concept : **K D Mahawar**")
+st.markdown("---") 
+
 st.markdown("बस WhatsApp मैसेज पेस्ट करें और फाइल तैयार! (Template ऑटोमेटिक लोड होगा)")
 
-# --- फाइल का नाम (जो आपने GitHub पर अपलोड की है) ---
+# --- फाइल का नाम (जो GitHub पर है) ---
 TEMPLATE_FILE = "template.xlsx"
 
 # --- टेक्स्ट इनपुट ---
@@ -17,43 +22,55 @@ raw_text = st.text_area("WhatsApp Message यहाँ पेस्ट करे
 
 # --- प्रोसेस बटन ---
 if st.button("Excel फाइल बनाएँ"):
-    # चेक करें कि GitHub पर template फाइल है या नहीं
     if not os.path.exists(TEMPLATE_FILE):
-        st.error("⚠️ Error: 'template.xlsx' फाइल नहीं मिली! कृपया इसे GitHub पर अपलोड करें।")
+        st.error("⚠️ Error: 'template.xlsx' फाइल नहीं मिली! कृपया GitHub पर फाइल चेक करें।")
     elif not raw_text:
         st.warning("⚠️ कृपया पहले WhatsApp मैसेज पेस्ट करें।")
     else:
         try:
-            # 1. GitHub (सर्वर) से सीधे टेम्पलेट फाइल लोड करें
             wb = load_workbook(TEMPLATE_FILE)
             ws = wb.active
             
             # -----------------------------------------------
-            # PART A: तारीख (Date) अपडेट करना
+            # PART A: स्मार्ट डेट लॉजिक (Smart Date Logic)
             # -----------------------------------------------
-            date_pattern = r"Date:\s*([\d]{1,2}[/-][\d]{1,2}[/-][\d]{2,4})"
+            # यह Regex तारीख के टुकड़ों (Day, Month, Year) को अलग-अलग पकड़ेगा
+            # चाहे बीच में / हो या -
+            date_pattern = r"Date:.*?(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})"
             date_match = re.search(date_pattern, raw_text, re.IGNORECASE)
             
-            date_found = False
-            new_date = "Unknown"
+            final_date_str = "Unknown"
+            file_date_str = "Updated"
             
             if date_match:
-                new_date = date_match.group(1)
+                day, month, year = date_match.groups()
                 
-                # Excel की पहली 10 लाइनों में "Date:" ढूंढकर अपडेट करें
+                # अगर साल सिर्फ 2 अंकों का है (जैसे 26), तो उसे 2026 बनाएं
+                if len(year) == 2:
+                    year = "20" + year
+                
+                # दिन और महीने को 2 अंकों का बनाएं (जैसे 1 को 01)
+                day = day.zfill(2)
+                month = month.zfill(2)
+                
+                # फाइनल फॉर्मेट: DD-MM-YYYY (20-01-2026)
+                final_date_str = f"{day}-{month}-{year}"
+                file_date_str = final_date_str # फाइल नाम के लिए भी यही इस्तेमाल होगा
+                
+                # Excel में अपडेट करें
+                date_found_in_excel = False
                 for row in ws.iter_rows(min_row=1, max_row=10, max_col=10):
                     for cell in row:
                         if cell.value and isinstance(cell.value, str) and "Date:" in cell.value:
-                            cell.value = f"Date: {new_date}"
-                            date_found = True
+                            cell.value = f"Date: {final_date_str}"
+                            date_found_in_excel = True
                             break
-                    if date_found:
+                    if date_found_in_excel:
                         break
             
             # -----------------------------------------------
-            # PART B: डेटा (Figures) अपडेट करना
+            # PART B: डेटा अपडेट करना (Robust Regex)
             # -----------------------------------------------
-            # यह पैटर्न बुलेट (•), स्पेस और कॉलन (:) की सभी गलतियों को संभाल लेगा
             pattern = (
                 r"\*(.*?)(?::)?\*\s+"                   # Name line
                 r"(?:•\s*)?Daily:\s*([\d.]+).*?\n\s*"   # Daily line
@@ -63,7 +80,6 @@ if st.button("Excel फाइल बनाएँ"):
             
             matches = re.findall(pattern, raw_text, re.MULTILINE)
             
-            # डेटा मैप तैयार करना
             data_map = {}
             for match in matches:
                 clean_name = match[0].replace(":", "").strip().lower()
@@ -75,38 +91,34 @@ if st.button("Excel फाइल बनाएँ"):
             
             updated_count = 0
             
-            # Excel की पंक्तियाँ स्कैन करें
             for row in ws.iter_rows(min_row=1, max_col=6):
-                name_cell = row[1]  # Column B
-                
+                name_cell = row[1]
                 if name_cell.value:
                     cell_value = str(name_cell.value).strip().lower()
-                    
                     if cell_value in data_map:
                         values = data_map[cell_value]
-                        
-                        row[3].value = values['daily']   # Column D
-                        row[4].value = values['monthly'] # Column E
-                        row[5].value = values['yearly']  # Column F
-                        
+                        row[3].value = values['daily']
+                        row[4].value = values['monthly']
+                        row[5].value = values['yearly']
                         updated_count += 1
 
             # -----------------------------------------------
-            # PART C: फाइल डाउनलोड के लिए तैयार करना
+            # PART C: फाइल सेव और डाउनलोड
             # -----------------------------------------------
             output = BytesIO()
             wb.save(output)
             output.seek(0)
             
-            msg_date = f" (Date: {new_date})" if date_found else ""
+            msg_date = f" (Date: {final_date_str})" if date_match else " (Date not found in Msg)"
             st.success(f"✅ काम हो गया! {updated_count} एंट्रीज अपडेट हुईं।{msg_date}")
             
-            file_name_date = new_date.replace('/', '-') if new_date != "Unknown" else "Updated"
+            # फाइल का नाम सेट करें
+            final_filename = f"DPR_{file_date_str}.xlsx"
             
             st.download_button(
-                label="📥 डाउनलोड Excel फाइल",
+                label=f"📥 डाउनलोड {final_filename}",
                 data=output,
-                file_name=f"DPR_{file_name_date}.xlsx",
+                file_name=final_filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
