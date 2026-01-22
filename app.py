@@ -5,53 +5,54 @@ import pandas as pd
 from io import BytesIO
 from openpyxl import load_workbook
 
-# --- पेज सेटिंग और डिजाइन ---
+# --- पेज सेटिंग ---
 st.set_page_config(page_title="DPR Auto-Filler", layout="wide")
 st.title("🚀 Quick DPR Generator")
 st.markdown("##### Design & Concept : **K D Mahawar**")
 st.markdown("---") 
 
-# --- फाइल पाथ्स (GitHub पर जो आपने अपलोड की हैं) ---
 TEMPLATE_FILE = "template.xlsx"
 LAST_YEAR_FILE = "last_year_data.xlsx"
 
-st.markdown("बस WhatsApp मैसेज पेस्ट करें, यह पिछले साल का डेटा भी अपने आप उठा लेगा।")
+# --- ALIAS MAPPING (यहाँ हम नामों की अदला-बदली संभालते हैं) ---
+# अगर व्हाट्सएप में 'Key' आए, तो उसे 'Value' समझो
+NAME_ALIASES = {
+    "silica univ lts": "silica sand lts",       # अगर Univ आए तो Sand समझो
+    "silica sand": "silica sand lts",           # अगर सिर्फ Sand आए तो भी Sand LTS समझो (optional)
+    "cumulative silica": "cumulative silica sand" # अगर Cumulative Silica आए तो पूरा नाम समझो
+}
 
-# --- टेक्स्ट इनपुट ---
 raw_text = st.text_area("WhatsApp Message यहाँ पेस्ट करें:", height=300)
 
 if st.button("Excel फाइल बनाएँ"):
     if not os.path.exists(TEMPLATE_FILE):
-        st.error(f"⚠️ Error: '{TEMPLATE_FILE}' नहीं मिली! इसे GitHub पर अपलोड करें।")
+        st.error(f"⚠️ Error: '{TEMPLATE_FILE}' नहीं मिली!")
     elif not raw_text:
-        st.warning("⚠️ कृपया पहले WhatsApp मैसेज पेस्ट करें।")
+        st.warning("⚠️ कृपया मैसेज पेस्ट करें।")
     else:
         try:
-            # 1. टेम्पलेट लोड करें (Formatting बचाने के लिए openpyxl)
             wb = load_workbook(TEMPLATE_FILE)
             ws = wb.active
             
             # ---------------------------------------------------------
-            # PART A: तारीख निकालना और पिछले साल की तारीख बनाना
+            # PART A: तारीख (Date) हैंडलिंग
             # ---------------------------------------------------------
             date_pattern = r"Date:.*?(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})"
             date_match = re.search(date_pattern, raw_text, re.IGNORECASE)
             
             final_date_str = "Unknown"
-            lookup_date_str = None
+            lookup_date_obj = None
             
             if date_match:
                 day, month, year = date_match.groups()
                 if len(year) == 2: year = "20" + year
                 
-                # आज की तारीख (Format: 20-01-2026)
                 final_date_str = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
                 
-                # पिछले साल की तारीख (Format: 20-01-2025)
-                last_year = str(int(year) - 1)
-                lookup_date_str = f"{day.zfill(2)}-{month.zfill(2)}-{last_year}"
+                # पिछले साल की तारीख (Comparison के लिए)
+                lookup_date_obj = pd.to_datetime(f"{day}-{month}-{int(year)-1}", dayfirst=True)
                 
-                # Excel के हेडर में आज की तारीख अपडेट करें
+                # Excel Header Update
                 for row in ws.iter_rows(min_row=1, max_row=10):
                     for cell in row:
                         if cell.value and isinstance(cell.value, str) and "Date:" in cell.value:
@@ -59,32 +60,27 @@ if st.button("Excel फाइल बनाएँ"):
                             break
 
             # ---------------------------------------------------------
-            # PART B: पिछले साल की फाइल से डेटा उठाना (G6, G7)
+            # PART B: पिछले साल का डेटा (Last Year Data)
             # ---------------------------------------------------------
-            if lookup_date_str and os.path.exists(LAST_YEAR_FILE):
+            if lookup_date_obj and os.path.exists(LAST_YEAR_FILE):
                 try:
-                    # पिछले साल की फाइल पढ़ें
                     ly_df = pd.read_excel(LAST_YEAR_FILE)
+                    ly_df['Date'] = pd.to_datetime(ly_df['Date'], dayfirst=True)
                     
-                    # सुनिश्चित करें कि 'Date' कॉलम सही फॉर्मेट में हो
-                    ly_df['Date'] = pd.to_datetime(ly_df['Date']).dt.strftime('%d-%m-%Y')
-                    
-                    # मैचिंग रो ढूँढें
-                    target_row = ly_df[ly_df['Date'] == lookup_date_str]
+                    target_row = ly_df[ly_df['Date'] == lookup_date_obj]
                     
                     if not target_row.empty:
-                        # G6 में Ball Clay की वैल्यू (मान लीजिए कॉलम का नाम 'Ball Clay' है)
+                        # G6 (Ball Clay) और G7 (Silica) Update
                         ws['G6'] = target_row['Ball Clay'].values[0]
-                        # G7 में Silica की वैल्यू (मान लीजिए कॉलम का नाम 'Silica' है)
                         ws['G7'] = target_row['Silica'].values[0]
-                        st.info(f"✅ पिछले साल का डेटा ({lookup_date_str}) G6 और G7 में भर दिया गया है।")
+                        st.info(f"✅ पिछले साल का डेटा ({lookup_date_obj.strftime('%d-%m-%Y')}) मिल गया!")
                     else:
-                        st.warning(f"⚠️ पिछले साल की फाइल में {lookup_date_str} की तारीख नहीं मिली।")
+                        st.warning(f"⚠️ पिछले साल की फाइल में तारीख {lookup_date_obj.strftime('%d-%m-%Y')} नहीं मिली।")
                 except Exception as ly_e:
-                    st.error(f"Last Year File Error: {ly_e}. कृपया कॉलम के नाम 'Date', 'Ball Clay', 'Silica' रखें।")
+                    st.error(f"Last Year File Error: {ly_e}")
 
             # ---------------------------------------------------------
-            # PART C: व्हाट्सएप मैसेज से आज का डेटा भरना
+            # PART C: व्हाट्सएप डेटा पार्सिंग (Alias Fix के साथ)
             # ---------------------------------------------------------
             pattern = (
                 r"\*(.*?)(?::)?\*\s+"
@@ -93,27 +89,51 @@ if st.button("Excel फाइल बनाएँ"):
                 r"(?:•\s*)?Yearly:\s*([\d.]+)"
             )
             matches = re.findall(pattern, raw_text, re.MULTILINE)
-            data_map = {m[0].replace(":","").strip().lower(): {'d':float(m[1]),'m':float(m[2]),'y':float(m[3])} for m in matches}
+            
+            data_map = {}
+            for match in matches:
+                # 1. नाम को साफ करें (Clean)
+                raw_name = match[0].replace(":", "").strip().lower()
+                
+                # 2. चेक करें कि क्या इसका कोई और नाम (Alias) है?
+                # अगर raw_name 'NAME_ALIASES' लिस्ट में है, तो उसे बदल दो
+                if raw_name in NAME_ALIASES:
+                    clean_name = NAME_ALIASES[raw_name]
+                else:
+                    clean_name = raw_name
+                
+                data_map[clean_name] = {
+                    'd': float(match[1]),
+                    'm': float(match[2]),
+                    'y': float(match[3])
+                }
 
+            # ---------------------------------------------------------
+            # PART D: Excel अपडेट करना
+            # ---------------------------------------------------------
             updated_count = 0
+            # Rows को स्कैन करें
             for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_col=6), 1):
-                name_cell = row[1] # Column B
+                name_cell = row[1] # Column B (Name)
+                
                 if name_cell.value:
-                    val = str(name_cell.value).strip().lower()
-                    if val in data_map:
-                        ws.cell(row=row_idx, column=4).value = data_map[val]['d'] # Col D
-                        ws.cell(row=row_idx, column=5).value = data_map[val]['m'] # Col E
-                        ws.cell(row=row_idx, column=6).value = data_map[val]['y'] # Col F
+                    # Excel के नाम को भी छोटा (lowercase) करें मैचिंग के लिए
+                    excel_name = str(name_cell.value).strip().lower()
+                    
+                    if excel_name in data_map:
+                        ws.cell(row=row_idx, column=4).value = data_map[excel_name]['d']
+                        ws.cell(row=row_idx, column=5).value = data_map[excel_name]['m']
+                        ws.cell(row=row_idx, column=6).value = data_map[excel_name]['y']
                         updated_count += 1
 
             # ---------------------------------------------------------
-            # PART D: डाउनलोड
+            # PART E: डाउनलोड
             # ---------------------------------------------------------
             output = BytesIO()
             wb.save(output)
             output.seek(0)
             
-            st.success(f"✅ फाइल तैयार! {updated_count} एंट्रीज अपडेट की गईं।")
+            st.success(f"✅ अपडेटेड! {updated_count} एंट्रीज भरी गईं (Aliases handled).")
             st.download_button(
                 label=f"📥 डाउनलोड DPR_{final_date_str}.xlsx",
                 data=output,
@@ -123,3 +143,4 @@ if st.button("Excel फाइल बनाएँ"):
 
         except Exception as e:
             st.error(f"Error: {e}")
+            
