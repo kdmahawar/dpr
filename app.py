@@ -14,7 +14,7 @@ st.markdown("---")
 TEMPLATE_FILE = "template.xlsx"
 LAST_YEAR_FILE = "last_year_data.xlsx"
 
-# --- ALIAS MAPPING (नाम सुधारने के लिए) ---
+# --- ALIAS MAPPING ---
 NAME_ALIASES = {
     "silica univ lts": "silica sand lts",
     "silica sand": "silica sand lts",
@@ -34,7 +34,7 @@ if st.button("Excel फाइल बनाएँ"):
             ws = wb.active
             
             # ---------------------------------------------------------
-            # PART A: तारीख (Date)
+            # PART A: तारीख (Date) हैंडलिंग
             # ---------------------------------------------------------
             date_pattern = r"Date:.*?(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})"
             date_match = re.search(date_pattern, raw_text, re.IGNORECASE)
@@ -45,10 +45,12 @@ if st.button("Excel फाइल बनाएँ"):
             if date_match:
                 day, month, year = date_match.groups()
                 if len(year) == 2: year = "20" + year
-                
                 final_date_str = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
+                
+                # पिछले साल की तारीख
                 lookup_date_obj = pd.to_datetime(f"{day}-{month}-{int(year)-1}", dayfirst=True)
                 
+                # Excel Header Update
                 for row in ws.iter_rows(min_row=1, max_row=10):
                     for cell in row:
                         if cell.value and isinstance(cell.value, str) and "Date:" in cell.value:
@@ -62,46 +64,31 @@ if st.button("Excel फाइल बनाएँ"):
                 try:
                     ly_df = pd.read_excel(LAST_YEAR_FILE)
                     ly_df['Date'] = pd.to_datetime(ly_df['Date'], dayfirst=True)
-                    
                     target_row = ly_df[ly_df['Date'] == lookup_date_obj]
                     
                     if not target_row.empty:
                         ws['G6'] = target_row['Ball Clay'].values[0]
                         ws['G7'] = target_row['Silica'].values[0]
-                        st.info(f"✅ पिछले साल का डेटा ({lookup_date_obj.strftime('%d-%m-%Y')}) मिल गया!")
-                    else:
-                        st.warning(f"⚠️ पिछले साल की फाइल में तारीख {lookup_date_obj.strftime('%d-%m-%Y')} नहीं मिली।")
+                        st.info(f"✅ पिछले साल का डेटा ({lookup_date_obj.strftime('%d-%m-%Y')}) अपडेटेड!")
                 except Exception as ly_e:
-                    pass # Error ignore कर रहे हैं ताकि मेन काम न रुके
+                    pass
 
             # ---------------------------------------------------------
-            # PART C: व्हाट्सएप डेटा (IMPROVED REGEX)
+            # PART C: व्हाट्सएप डेटा पार्सिंग
             # ---------------------------------------------------------
-            # यह पैटर्न अब स्टार (*) हो या न हो, दोनों को पकड़ेगा
-            # (?:^|\n) -> नई लाइन से शुरू
-            # (?:\*)? -> स्टार हो सकता है या नहीं
-            # ([^\n\r*:]+?) -> नाम (बिना :, *, या न्यूलाइन के)
-            # (?::)? -> कॉलन हो सकता है
-            # (?:\*)? -> स्टार हो सकता है
+            # Regex पैटर्न जो स्टार (*) हो या न हो, दोनों को पकड़ेगा
             pattern = (
-                r"(?:^|\n)\s*(?:\*)?([^\n\r*]+?)(?::)?(?:\*)?\s*\n\s*" # Name Line
-                r"(?:•\s*)?Daily:\s*([\d.]+).*?\n\s*"                    # Daily
-                r"(?:•\s*)?Monthly:\s*([\d.]+).*?\n\s*"                  # Monthly
-                r"(?:•\s*)?Yearly:\s*([\d.]+)"                           # Yearly
+                r"(?:^|\n)\s*(?:\*)?([^\n\r*]+?)(?::)?(?:\*)?\s*\n\s*" 
+                r"(?:•\s*)?Daily:\s*([\d.]+).*?\n\s*"
+                r"(?:•\s*)?Monthly:\s*([\d.]+).*?\n\s*"
+                r"(?:•\s*)?Yearly:\s*([\d.]+)"
             )
-            
             matches = re.findall(pattern, raw_text, re.MULTILINE)
             
             data_map = {}
             for match in matches:
-                # 1. नाम साफ करें
                 raw_name = match[0].strip().lower()
-                
-                # 2. Alias चेक करें
-                if raw_name in NAME_ALIASES:
-                    clean_name = NAME_ALIASES[raw_name]
-                else:
-                    clean_name = raw_name
+                clean_name = NAME_ALIASES.get(raw_name, raw_name)
                 
                 data_map[clean_name] = {
                     'd': float(match[1]),
@@ -110,14 +97,25 @@ if st.button("Excel फाइल बनाएँ"):
                 }
 
             # ---------------------------------------------------------
-            # PART D: Excel अपडेट
+            # PART D: Excel अपडेट (RESET LOGIC ADDED)
             # ---------------------------------------------------------
             updated_count = 0
-            for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_col=6), 1):
-                name_cell = row[1]
+            
+            # Row 4 से शुरू करें (ताकि हेडर खराब न हो)
+            for row_idx, row in enumerate(ws.iter_rows(min_row=4, max_col=6), 4):
+                name_cell = row[1] # Column B (Name)
+                
                 if name_cell.value:
                     excel_name = str(name_cell.value).strip().lower()
                     
+                    # --- NEW LOGIC: पहले पुराने डेटा को 0 कर दें ---
+                    # (ताकि अगर मैसेज में यह नाम न हो, तो पुराना डेटा न दिखे)
+                    if "description" not in excel_name and "date" not in excel_name:
+                        ws.cell(row=row_idx, column=4).value = 0.0
+                        ws.cell(row=row_idx, column=5).value = 0.0
+                        ws.cell(row=row_idx, column=6).value = 0.0
+
+                    # अब अगर मैसेज में डेटा है, तो उसे भरें
                     if excel_name in data_map:
                         ws.cell(row=row_idx, column=4).value = data_map[excel_name]['d']
                         ws.cell(row=row_idx, column=5).value = data_map[excel_name]['m']
@@ -131,7 +129,7 @@ if st.button("Excel फाइल बनाएँ"):
             wb.save(output)
             output.seek(0)
             
-            st.success(f"✅ अपडेटेड! {updated_count} एंट्रीज भरी गईं।")
+            st.success(f"✅ अपडेटेड! {updated_count} एंट्रीज भरी गईं (बाकी सब 0 कर दी गईं)।")
             st.download_button(
                 label=f"📥 डाउनलोड DPR_{final_date_str}.xlsx",
                 data=output,
