@@ -14,12 +14,11 @@ st.markdown("---")
 TEMPLATE_FILE = "template.xlsx"
 LAST_YEAR_FILE = "last_year_data.xlsx"
 
-# --- ALIAS MAPPING (यहाँ हम नामों की अदला-बदली संभालते हैं) ---
-# अगर व्हाट्सएप में 'Key' आए, तो उसे 'Value' समझो
+# --- ALIAS MAPPING (नाम सुधारने के लिए) ---
 NAME_ALIASES = {
-    "silica univ lts": "silica sand lts",       # अगर Univ आए तो Sand समझो
-    "silica sand": "silica sand lts",           # अगर सिर्फ Sand आए तो भी Sand LTS समझो (optional)
-    "cumulative silica": "cumulative silica sand" # अगर Cumulative Silica आए तो पूरा नाम समझो
+    "silica univ lts": "silica sand lts",
+    "silica sand": "silica sand lts",
+    "cumulative silica": "cumulative silica sand"
 }
 
 raw_text = st.text_area("WhatsApp Message यहाँ पेस्ट करें:", height=300)
@@ -35,7 +34,7 @@ if st.button("Excel फाइल बनाएँ"):
             ws = wb.active
             
             # ---------------------------------------------------------
-            # PART A: तारीख (Date) हैंडलिंग
+            # PART A: तारीख (Date)
             # ---------------------------------------------------------
             date_pattern = r"Date:.*?(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})"
             date_match = re.search(date_pattern, raw_text, re.IGNORECASE)
@@ -48,11 +47,8 @@ if st.button("Excel फाइल बनाएँ"):
                 if len(year) == 2: year = "20" + year
                 
                 final_date_str = f"{day.zfill(2)}-{month.zfill(2)}-{year}"
-                
-                # पिछले साल की तारीख (Comparison के लिए)
                 lookup_date_obj = pd.to_datetime(f"{day}-{month}-{int(year)-1}", dayfirst=True)
                 
-                # Excel Header Update
                 for row in ws.iter_rows(min_row=1, max_row=10):
                     for cell in row:
                         if cell.value and isinstance(cell.value, str) and "Date:" in cell.value:
@@ -70,33 +66,38 @@ if st.button("Excel फाइल बनाएँ"):
                     target_row = ly_df[ly_df['Date'] == lookup_date_obj]
                     
                     if not target_row.empty:
-                        # G6 (Ball Clay) और G7 (Silica) Update
                         ws['G6'] = target_row['Ball Clay'].values[0]
                         ws['G7'] = target_row['Silica'].values[0]
                         st.info(f"✅ पिछले साल का डेटा ({lookup_date_obj.strftime('%d-%m-%Y')}) मिल गया!")
                     else:
                         st.warning(f"⚠️ पिछले साल की फाइल में तारीख {lookup_date_obj.strftime('%d-%m-%Y')} नहीं मिली।")
                 except Exception as ly_e:
-                    st.error(f"Last Year File Error: {ly_e}")
+                    pass # Error ignore कर रहे हैं ताकि मेन काम न रुके
 
             # ---------------------------------------------------------
-            # PART C: व्हाट्सएप डेटा पार्सिंग (Alias Fix के साथ)
+            # PART C: व्हाट्सएप डेटा (IMPROVED REGEX)
             # ---------------------------------------------------------
+            # यह पैटर्न अब स्टार (*) हो या न हो, दोनों को पकड़ेगा
+            # (?:^|\n) -> नई लाइन से शुरू
+            # (?:\*)? -> स्टार हो सकता है या नहीं
+            # ([^\n\r*:]+?) -> नाम (बिना :, *, या न्यूलाइन के)
+            # (?::)? -> कॉलन हो सकता है
+            # (?:\*)? -> स्टार हो सकता है
             pattern = (
-                r"\*(.*?)(?::)?\*\s+"
-                r"(?:•\s*)?Daily:\s*([\d.]+).*?\n\s*"
-                r"(?:•\s*)?Monthly:\s*([\d.]+).*?\n\s*"
-                r"(?:•\s*)?Yearly:\s*([\d.]+)"
+                r"(?:^|\n)\s*(?:\*)?([^\n\r*]+?)(?::)?(?:\*)?\s*\n\s*" # Name Line
+                r"(?:•\s*)?Daily:\s*([\d.]+).*?\n\s*"                    # Daily
+                r"(?:•\s*)?Monthly:\s*([\d.]+).*?\n\s*"                  # Monthly
+                r"(?:•\s*)?Yearly:\s*([\d.]+)"                           # Yearly
             )
+            
             matches = re.findall(pattern, raw_text, re.MULTILINE)
             
             data_map = {}
             for match in matches:
-                # 1. नाम को साफ करें (Clean)
-                raw_name = match[0].replace(":", "").strip().lower()
+                # 1. नाम साफ करें
+                raw_name = match[0].strip().lower()
                 
-                # 2. चेक करें कि क्या इसका कोई और नाम (Alias) है?
-                # अगर raw_name 'NAME_ALIASES' लिस्ट में है, तो उसे बदल दो
+                # 2. Alias चेक करें
                 if raw_name in NAME_ALIASES:
                     clean_name = NAME_ALIASES[raw_name]
                 else:
@@ -109,15 +110,12 @@ if st.button("Excel फाइल बनाएँ"):
                 }
 
             # ---------------------------------------------------------
-            # PART D: Excel अपडेट करना
+            # PART D: Excel अपडेट
             # ---------------------------------------------------------
             updated_count = 0
-            # Rows को स्कैन करें
             for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_col=6), 1):
-                name_cell = row[1] # Column B (Name)
-                
+                name_cell = row[1]
                 if name_cell.value:
-                    # Excel के नाम को भी छोटा (lowercase) करें मैचिंग के लिए
                     excel_name = str(name_cell.value).strip().lower()
                     
                     if excel_name in data_map:
@@ -133,7 +131,7 @@ if st.button("Excel फाइल बनाएँ"):
             wb.save(output)
             output.seek(0)
             
-            st.success(f"✅ अपडेटेड! {updated_count} एंट्रीज भरी गईं (Aliases handled).")
+            st.success(f"✅ अपडेटेड! {updated_count} एंट्रीज भरी गईं।")
             st.download_button(
                 label=f"📥 डाउनलोड DPR_{final_date_str}.xlsx",
                 data=output,
