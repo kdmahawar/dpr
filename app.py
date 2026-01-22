@@ -18,34 +18,25 @@ LAST_YEAR_FILE = "last_year_data.xlsx"
 def normalize_name(name):
     if not name:
         return ""
+    # सिर्फ a-z और 0-9 रखो, बाकी सब हटा दो
     return re.sub(r'[^a-zA-Z0-9]', '', str(name)).lower()
 
-# --- ALIAS MAPPING ---
+# --- ALIAS MAPPING (बाकी नामों के लिए) ---
 NAME_ALIASES = {
-    "silicaunivlts": "silicasandlts",
-    "silicasand": "silicasandlts",
-    "cumulativesilica": "cumulativesilicasand"
+    "cumulativesilica": "cumulativesilicasand",
+    # Univ वाला काम अब हम नीचे if-condition से करेंगे, इसलिए यहाँ लिखने की जरूरत नहीं
 }
 
-# --- HELPER 2: टेक्स्ट में से सही नंबर निकालना (Trucks को हटाकर) ---
+# --- HELPER 2: नंबर निकालना ---
 def extract_float(text):
     if not text:
         return 0.0
-    
-    # 1. सबसे पहले NIL चेक करें
     if "nil" in text.lower():
         return 0.0
-
-    # 2. (NEW LOGIC) ब्रैकेट और उसके अंदर की चीज़ों को हटा दें
-    # जैसे: "MT (4 Trucks)" --> "MT " रह जाएगा
     text_no_brackets = re.sub(r'\(.*?\)', '', text)
-
-    # 3. अब बचे हुए हिस्से में नंबर ढूँढें
     match = re.search(r"(\d+(\.\d+)?)", text_no_brackets)
     if match:
         return float(match.group(1))
-    
-    # अगर ब्रैकेट हटाने के बाद कोई नंबर नहीं बचा, तो 0.0
     return 0.0
 
 raw_text = st.text_area("WhatsApp Message यहाँ पेस्ट करें:", height=300)
@@ -99,7 +90,7 @@ if st.button("Excel फाइल बनाएँ"):
                     pass
 
             # ---------------------------------------------------------
-            # PART C: व्हाट्सएप डेटा (Regex)
+            # PART C: व्हाट्सएप डेटा पार्सिंग
             # ---------------------------------------------------------
             pattern = (
                 r"(?:^|\n)\s*(?:\*)?([^\n\r*]+?)(?::)?(?:\*)?\s*\n\s*" 
@@ -112,10 +103,20 @@ if st.button("Excel फाइल बनाएँ"):
             
             data_map = {}
             for match in matches:
+                # 1. नाम को नॉर्मल करो
                 raw_name_norm = normalize_name(match[0])
-                final_key = NAME_ALIASES.get(raw_name_norm, raw_name_norm)
                 
-                # यहाँ extract_float फंक्शन अपना काम करेगा
+                # --- SMART LOGIC: Univ कहीं भी हो, पकड़ लो ---
+                if "univ" in raw_name_norm:
+                    # अगर 'univ' शब्द है, तो उसे सीधे 'Silica Sand LTS' मानो
+                    final_key = "silicasandlts"
+                
+                # बाकी Alias चेक करो
+                elif raw_name_norm in NAME_ALIASES:
+                    final_key = NAME_ALIASES[raw_name_norm]
+                else:
+                    final_key = raw_name_norm
+                
                 data_map[final_key] = {
                     'd': extract_float(match[1]),
                     'm': extract_float(match[2]),
@@ -132,13 +133,13 @@ if st.button("Excel फाइल बनाएँ"):
                 if name_cell.value:
                     excel_name_norm = normalize_name(name_cell.value)
                     
-                    # 1. Reset Logic
+                    # 1. Reset
                     if "description" not in excel_name_norm and "date" not in excel_name_norm:
                         ws.cell(row=row_idx, column=4).value = 0.0
                         ws.cell(row=row_idx, column=5).value = 0.0
                         ws.cell(row=row_idx, column=6).value = 0.0
 
-                    # 2. Update Data
+                    # 2. Update
                     if excel_name_norm in data_map:
                         ws.cell(row=row_idx, column=4).value = data_map[excel_name_norm]['d']
                         ws.cell(row=row_idx, column=5).value = data_map[excel_name_norm]['m']
@@ -152,7 +153,7 @@ if st.button("Excel फाइल बनाएँ"):
             wb.save(output)
             output.seek(0)
             
-            st.success(f"✅ अपडेटेड! {updated_count} एंट्रीज भरी गईं (Trucks numbers ignored).")
+            st.success(f"✅ अपडेटेड! {updated_count} एंट्रीज भरी गईं।")
             st.download_button(
                 label=f"📥 डाउनलोड DPR_{final_date_str}.xlsx",
                 data=output,
